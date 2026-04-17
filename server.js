@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 app.use(cors());
@@ -7,38 +8,64 @@ app.use(express.json());
 
 const PORT = 5000;
 
-// ✅ Test route
 app.get("/", (req, res) => {
-  res.send("PDPA Backend is running 🚀");
+  res.send("PDPA Hybrid Backend is running 🚀");
 });
 
-
-// 🔍 Keyword Rules
 const rules = {
   consent: ["consent", "agree", "permission"],
-  withdraw: ["withdraw", "unsubscribe", "opt-out"],
+  withdrawal: ["withdraw", "unsubscribe", "opt-out"],
   erasure: ["delete", "erase", "remove"],
   access: ["access", "view data", "request data"],
   retention: ["retain", "store", "period", "keep data"],
   security: ["encrypt", "security", "protect", "safeguard"],
-  transfer: ["third party", "outside", "international", "share data"]
+  transfer: ["third party", "outside", "international", "cross-border"]
 };
 
-
-// 🧠 Step 1: Extract Sentences
 function extractSentences(text) {
   return text
     .split(/[.?!]/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
+function matchRule(sentence) {
+  const lower = sentence.toLowerCase();
 
-// 🧠 Step 2: Clause-Level Matching
-function analyzeSentences(sentences) {
-  const result = {
+  for (const label in rules) {
+    const matched = rules[label].some((word) => lower.includes(word));
+    if (matched) {
+      return {
+        label,
+        source: "rule",
+        confidence: 0.95,
+        evidence: sentence
+      };
+    }
+  }
+
+  return null;
+}
+
+async function getMLPrediction(sentence) {
+  try {
+    const response = await axios.post("http://localhost:6000/predict", {
+      text: sentence
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error("ML API error:", error.message);
+    return null;
+  }
+}
+
+async function analyzePolicy(text) {
+  const sentences = extractSentences(text);
+
+  const results = {
     consent: null,
-    withdraw: null,
+    withdrawal: null,
     erasure: null,
     access: null,
     retention: null,
@@ -46,117 +73,80 @@ function analyzeSentences(sentences) {
     transfer: null
   };
 
-  sentences.forEach(sentence => {
-    const s = sentence.toLowerCase();
+  for (const sentence of sentences) {
+    const ruleResult = matchRule(sentence);
 
-    if (!result.consent && rules.consent.some(w => s.includes(w))) {
-      result.consent = sentence;
+    if (ruleResult && !results[ruleResult.label]) {
+      results[ruleResult.label] = ruleResult;
+      continue;
     }
 
-    if (!result.withdraw && rules.withdraw.some(w => s.includes(w))) {
-      result.withdraw = sentence;
-    }
+    const mlResult = await getMLPrediction(sentence);
 
-    if (!result.erasure && rules.erasure.some(w => s.includes(w))) {
-      result.erasure = sentence;
+    if (
+      mlResult &&
+      mlResult.label &&
+      results[mlResult.label] === null &&
+      mlResult.confidence >= 0.35
+    ) {
+      results[mlResult.label] = {
+        label: mlResult.label,
+        source: "ml",
+        confidence: mlResult.confidence,
+        evidence: sentence
+      };
     }
+  }
 
-    if (!result.access && rules.access.some(w => s.includes(w))) {
-      result.access = sentence;
-    }
-
-    if (!result.retention && rules.retention.some(w => s.includes(w))) {
-      result.retention = sentence;
-    }
-
-    if (!result.security && rules.security.some(w => s.includes(w))) {
-      result.security = sentence;
-    }
-
-    if (!result.transfer && rules.transfer.some(w => s.includes(w))) {
-      result.transfer = sentence;
-    }
-  });
-
-  return result;
+  return {
+    totalSentences: sentences.length,
+    results
+  };
 }
 
-
-// 🧠 Step 3: Confidence Score (Simple Logic)
-function getScore(found) {
-  return found ? (Math.random() * 0.2 + 0.8).toFixed(2) : 0;
+function createSection(section, data) {
+  return {
+    section,
+    status: data ? "✅ Compliant" : "❌ Missing",
+    confidence: data ? data.confidence : 0,
+    source: data ? data.source : "none",
+    evidence: data ? data.evidence : "No relevant sentence found"
+  };
 }
 
-
-// 📊 Step 4: Generate Report
-function generateReport(result) {
+function generateReport(results) {
   return [
-    {
-      section: "Section 11 - Transparency",
-      status: result.consent ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.consent),
-      evidence: result.consent || "No relevant sentence found"
-    },
-    {
-      section: "Section 14 - Withdrawal of Consent",
-      status: result.withdraw ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.withdraw),
-      evidence: result.withdraw || "No relevant sentence found"
-    },
-    {
-      section: "Section 16 - Right to Erasure",
-      status: result.erasure ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.erasure),
-      evidence: result.erasure || "No relevant sentence found"
-    },
-    {
-      section: "Section 13 - Right to Access",
-      status: result.access ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.access),
-      evidence: result.access || "No relevant sentence found"
-    },
-    {
-      section: "Section 9 - Data Retention",
-      status: result.retention ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.retention),
-      evidence: result.retention || "No relevant sentence found"
-    },
-    {
-      section: "Section 10 - Security",
-      status: result.security ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.security),
-      evidence: result.security || "No relevant sentence found"
-    },
-    {
-      section: "Section 26 - Cross-border Transfer",
-      status: result.transfer ? "✅ Compliant" : "❌ Missing",
-      confidence: getScore(result.transfer),
-      evidence: result.transfer || "No relevant sentence found"
-    }
+    createSection("Section 11 - Transparency", results.consent),
+    createSection("Section 14 - Withdrawal of Consent", results.withdrawal),
+    createSection("Section 16 - Right to Erasure", results.erasure),
+    createSection("Section 13 - Right to Access", results.access),
+    createSection("Section 9 - Data Retention", results.retention),
+    createSection("Section 10 - Security", results.security),
+    createSection("Section 26 - Cross-border Transfer", results.transfer)
   ];
 }
 
-
-// 🚀 Analyze API
-app.post("/analyze", (req, res) => {
+app.post("/analyze", async (req, res) => {
   const { text } = req.body;
 
   if (!text || text.trim() === "") {
     return res.status(400).json({ error: "No text provided" });
   }
 
-  const sentences = extractSentences(text);
-  const analysis = analyzeSentences(sentences);
-  const report = generateReport(analysis);
+  try {
+    const analysis = await analyzePolicy(text);
+    const report = generateReport(analysis.results);
 
-  res.json({
-    totalSentences: sentences.length,
-    report
-  });
+    res.json({
+      totalSentences: analysis.totalSentences,
+      report
+    });
+  } catch (error) {
+    console.error("Analyze error:", error.message);
+    res.status(500).json({ error: "Failed to analyze policy" });
+  }
 });
 
-
-// ▶️ Start Server
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
